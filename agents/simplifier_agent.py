@@ -73,14 +73,13 @@ class SimplifierState(TypedDict, total=False):
 
 
 def _build_model() -> LiteLLMModel:
-	"""Create the Gemini-backed LiteLLM model for Smolagents."""
-	api_key = os.getenv("GEMINI_API_KEY")
-	if not api_key:
-		raise RuntimeError("GEMINI_API_KEY is required to run the simplifier agent.")
+	"""Create an Ollama-backed LiteLLM model for Smolagents."""
+	api_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+	model_name = os.getenv("OLLAMA_MODEL", "mistral")
 
 	return LiteLLMModel(
-		model_id="gemini/gemini-2.5-flash-reasoning",
-		api_key=api_key,
+		model_id=f"ollama/{model_name}",
+		api_base=api_base,
 	)
 
 
@@ -90,7 +89,7 @@ def _build_agent() -> ToolCallingAgent:
 		tools=[],
 		model=_build_model(),
 		max_steps=2,
-		system_prompt=SYSTEM_PROMPT,
+		instructions=SYSTEM_PROMPT,
 	)
 
 

@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 import os
 
 from llama_index.core import Document, VectorStoreIndex, Settings
+from llama_index.core.embeddings import MockEmbedding
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.gemini import GeminiEmbedding
 
@@ -39,7 +40,9 @@ class LlamaIndexPipeline:
         if api_key:
             Settings.embed_model = GeminiEmbedding(model_name="models/embedding-001", api_key=api_key)
         else:
-            print("WARNING: GEMINI_API_KEY not found in environment. Default embeddings will be used if any.")
+            # Avoid implicit OpenAI fallback when no cloud embedding key is available.
+            Settings.embed_model = MockEmbedding(embed_dim=768)
+            print("WARNING: GEMINI_API_KEY not found. Using local MockEmbedding fallback.")
 
     def process_and_retrieve(self, articles: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
         """

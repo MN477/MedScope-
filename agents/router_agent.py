@@ -29,6 +29,8 @@ treatment - "how is X treated", "what medication for X", "can X be cured", "how 
 overview - broad queries that do not fit cleanly into any one category, or queries that explicitly ask for a general summary. "Tell me everything about X", "give me information about X".
 
 No elaboration: Do not explain your reasoning. Do not add punctuation. Return only the single classification word.
+
+Framework rule: The punctuation restriction applies only to the final classification content. You must still emit a valid final_answer tool call using the exact function-call format required by the agent runtime.
 """
 
 
@@ -56,14 +58,13 @@ class RouterState(TypedDict, total=False):
 
 
 def _build_model() -> LiteLLMModel:
-	"""Create the Gemini-backed LiteLLM model for Smolagents."""
-	api_key = os.getenv("GEMINI_API_KEY")
-	if not api_key:
-		raise RuntimeError("GEMINI_API_KEY is required to run the router agent.")
+	"""Create an Ollama-backed LiteLLM model for Smolagents."""
+	api_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+	model_name = os.getenv("OLLAMA_MODEL", "mistral")
 
 	return LiteLLMModel(
-		model_id="gemini/gemini-2.5-flash-reasoning",
-		api_key=api_key,
+		model_id=f"ollama/{model_name}",
+		api_base=api_base,
 	)
 
 
@@ -73,7 +74,7 @@ def _build_agent() -> ToolCallingAgent:
 		tools=[],
 		model=_build_model(),
 		max_steps=2,
-		system_prompt=SYSTEM_PROMPT,
+		instructions=SYSTEM_PROMPT,
 	)
 
 
@@ -93,6 +94,18 @@ def _normalize_label(raw: Any) -> str:
 	text = re.sub(r"[^a-z]", "", text)
 	if text in ALLOWED_QUERY_TYPES:
 		return text
+	return "unknown"
+
+
+def _extract_label_from_error(error_text: str) -> str:
+	"""Recover a valid label from provider error payloads when possible."""
+	if not error_text:
+		return "unknown"
+
+	match = re.search(r"\b(definition|symptoms|treatment|causes|overview|unknown)\b", error_text.lower())
+	if match:
+		label = match.group(1)
+		return label if label in ALLOWED_QUERY_TYPES else "unknown"
 	return "unknown"
 
 
@@ -138,6 +151,19 @@ def run_router_agent(state: RouterState) -> RouterState:
 		}
 	except Exception as exc:
 		logger.exception("Router agent execution failed: %s", exc)
+		recovered_query_type = _extract_label_from_error(str(exc))
+		if recovered_query_type != "unknown":
+			metadata["router_agent"] = {
+				"status": "ok_with_fallback",
+				"query_type": recovered_query_type,
+				"fallback_reason": "Recovered label from provider function-call error payload.",
+			}
+			return {
+				"query_type": recovered_query_type,
+				"error": None,
+				"metadata": metadata,
+			}
+
 		metadata["router_agent"] = {
 			"status": "failed",
 			"reason": str(exc),

@@ -84,10 +84,15 @@ def _reset_runtime_outputs() -> None:
 def pubmed_search_tool(illness_name: str) -> List[Dict[str, Any]]:
 	"""Searches PubMed and PubMed Central for peer-reviewed medical literature.
 
-	It accepts a single illness or condition name as a string.
-	It returns a list of article dictionaries with pmid, title, content,
-	and content_type fields.
-	It should be called first before any retrieval happens
+	Args:
+		illness_name: Illness or condition name to search in PubMed.
+
+	Returns:
+		A list of article dictionaries with pmid, title, content, and
+		content_type fields.
+
+	Notes:
+		This tool should be called before retrieval.
 	"""
 	context = _get_runtime_context()
 	query = (illness_name or "").strip()
@@ -95,25 +100,44 @@ def pubmed_search_tool(illness_name: str) -> List[Dict[str, Any]]:
 		context.last_fetched_articles = []
 		return []
 
-	articles = context.pubmed_pipeline.fetch_articles(query=query, max_results=20)
+	# Keep retrieval quality while reducing model context size sent back as observation.
+	articles = context.pubmed_pipeline.fetch_articles(query=query, max_results=8)
 	context.last_fetched_articles = articles
-	return articles
+
+	compact_articles: List[Dict[str, Any]] = []
+	for article in articles:
+		content = str(article.get("content") or "").strip().replace("\n", " ")
+		compact_articles.append(
+			{
+				"pmid": article.get("pmid"),
+				"title": article.get("title", ""),
+				"content_type": article.get("content_type"),
+				"content_preview": content[:300],
+			}
+		)
+
+	return compact_articles
 
 
 @tool
-def llamaindex_retrieval_tool(
-	articles: List[Dict[str, Any]], query: str
-) -> List[Dict[str, Any]]:
+def llamaindex_retrieval_tool(query: str) -> List[Dict[str, Any]]:
 	"""Indexes and retrieves the most relevant passages from a list of articles.
 
-	It accepts the article list from the PubMed tool and the original query string.
-	It returns a list of text chunks with source metadata.
-	It should only be called after the PubMed tool has returned validate results
+	Args:
+		query: Original user query used for semantic retrieval.
+
+	Returns:
+		A list of text chunks with source metadata.
+
+	Notes:
+		This tool should be called only after PubMed returns valid results.
+		It automatically uses the most recent PubMed results from runtime context.
 	"""
+	context = _get_runtime_context()
+	articles = context.last_fetched_articles
 	if not articles:
 		return []
 
-	context = _get_runtime_context()
 	raw_results = context.retrieval_pipeline.process_and_retrieve(articles, query)
 
 	# Normalize fields expected by downstream state while preserving metadata.
@@ -135,14 +159,13 @@ def llamaindex_retrieval_tool(
 
 
 def _build_model() -> LiteLLMModel:
-	"""Create the Gemini-backed LiteLLM model for Smolagents."""
-	api_key = os.getenv("GEMINI_API_KEY")
-	if not api_key:
-		raise RuntimeError("GEMINI_API_KEY is required to run the research agent.")
+	"""Create an Ollama-backed LiteLLM model for Smolagents."""
+	api_base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+	model_name = os.getenv("OLLAMA_MODEL", "mistral")
 
 	return LiteLLMModel(
-		model_id="gemini/gemini-2.5-flash-reasoning",
-		api_key=api_key,
+		model_id=f"ollama/{model_name}",
+		api_base=api_base,
 	)
 
 
@@ -153,7 +176,7 @@ def _build_agent() -> ToolCallingAgent:
 		tools=[pubmed_search_tool, llamaindex_retrieval_tool],
 		model=model,
 		max_steps=5,
-		system_prompt=SYSTEM_PROMPT,
+		instructions=SYSTEM_PROMPT,
 	)
 
 
@@ -221,7 +244,7 @@ def run_research_agent(state: ResearchState) -> ResearchState:
 		"Instructions:\n"
 		"1) Call pubmed_search_tool first.\n"
 		"2) Evaluate if results are relevant/sufficient. If sparse or off-topic, retry pubmed_search_tool with a more specific query.\n"
-		"3) Call llamaindex_retrieval_tool only after PubMed results exist, using the article list and the original user query.\n"
+		"3) Call llamaindex_retrieval_tool only after PubMed results exist, using the original user query.\n"
 		"4) Return ONLY JSON: an array of chunk dictionaries, no extra text."
 	)
 

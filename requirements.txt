@@ -3,4 +3,6 @@ python-dotenv>=1.0.0
 llama-index-embeddings-gemini
 llama_index 
 smolagents
+langgraph>=0.2.0
+streamlit>=1.36.0
 
