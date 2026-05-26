@@ -2,9 +2,8 @@ from typing import List, Dict, Any
 import os
 
 from llama_index.core import Document, VectorStoreIndex, Settings
-from llama_index.core.embeddings import MockEmbedding
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.embeddings.gemini import GeminiEmbedding
+from llama_index.embeddings.ollama import OllamaEmbedding
 
 class LlamaIndexPipeline:
     """
@@ -35,14 +34,10 @@ class LlamaIndexPipeline:
             chunk_overlap=self.chunk_overlap
         )
         
-        # Configure Gemini Embedding model
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key:
-            Settings.embed_model = GeminiEmbedding(model_name="models/embedding-001", api_key=api_key)
-        else:
-            # Avoid implicit OpenAI fallback when no cloud embedding key is available.
-            Settings.embed_model = MockEmbedding(embed_dim=768)
-            print("WARNING: GEMINI_API_KEY not found. Using local MockEmbedding fallback.")
+        # Configure Ollama embedding model
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+        embed_model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+        Settings.embed_model = OllamaEmbedding(model_name=embed_model, base_url=base_url)
 
     def process_and_retrieve(self, articles: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
         """
